@@ -1,0 +1,12 @@
+*
+*.*
+!*/
+
+!*.js
+!*.md
+!Makefile
+!.gitignore
+!package.json
+
+node_modules/
+storage/
