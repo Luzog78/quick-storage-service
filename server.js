@@ -1,3 +1,4 @@
+const jwt					= require('jsonwebtoken');
 const fs					= require('fs/promises');
 const express				= require('express');
 const dotenv				= require('dotenv');
@@ -87,7 +88,22 @@ const asyncHandler = (fn) => (req, res, next) => {
 const extractAuth = (req, res, next) => {
 	const authHeader = req.headers.authorization || '';
 	const token = authHeader.replace('Bearer ', '').trim();
-	req.isAuthenticated = (token === TOKEN);
+
+	req.isAuthenticated = false;
+	req.isRoot = false;
+	req.authData = null;
+
+	if (token === TOKEN) {
+		req.isAuthenticated = true;
+		req.isRoot = true;
+	} else {
+		try {
+			const decoded = jwt.verify(token, TOKEN);
+			req.isAuthenticated = true;
+			req.authData = decoded;
+		} catch (err) {
+		}
+	}
 	next();
 };
 
@@ -97,6 +113,13 @@ const requireAuth = (req, res, next) => {
 		return res.status(401).json({ ok: false, error: 'Unauthorized' });
 	next();
 };
+
+
+const requireRoot = (req, res, next) => {
+	if (!req.isRoot)
+		return res.status(401).json({ ok: false, error: 'Unauthorized' });
+	next();
+}
 
 
 app.use(extractAuth);
@@ -204,7 +227,7 @@ const handleUpload = async (req, res, next, baseDir) => {
 			query: [{ name: 'file', maxCount: 1 }],
 		};
 	}
-	
+
 	upload.fields(req.uploadConf.query)(req, res, async (err) => {
 		if (err) {
 			if (err instanceof multer.MulterError)
@@ -271,7 +294,7 @@ app.delete(/^\/s(\/(.*))?/, requireAuth, asyncHandler(async (req, res) => {
 }));
 
 
-app.put(/^\/move\/?/, requireAuth, upload.none(), asyncHandler(async (req, res) => {
+app.put('/move', requireAuth, upload.none(), asyncHandler(async (req, res) => {
 	const { from, to } = req.body;
 	if (!from || !to)
 		return res.status(400).json({ ok: false, error: 'Missing "from" or "to" parameters' });
@@ -327,6 +350,18 @@ app.put(/^\/move\/?/, requireAuth, upload.none(), asyncHandler(async (req, res) 
 
 	res.json({ ok: true, message: 'Moved successfully' });
 }));
+
+
+app.get('/auth', requireRoot, (req, res) => {
+	const { iss, sub, exp } = req.query;
+	const token = jwt.sign({}, TOKEN, {
+		issuer: iss || 'QSS',
+		expiresIn: exp || '1h',
+		...(sub ? { subject: sub } : {})
+	});
+
+	res.json({ ok: true, token });
+});
 
 
 app.use((err, req, res, next) => {
