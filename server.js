@@ -1,3 +1,4 @@
+const rateLimit				= require('express-rate-limit');
 const jwt					= require('jsonwebtoken');
 const fs					= require('fs/promises');
 const express				= require('express');
@@ -16,22 +17,6 @@ const PORT = process.env.PORT || 3001;
 const PUBLIC_DIR = process.env.STORAGE_PUBLIC || 'storage/public';
 const PRIVATE_DIR = process.env.STORAGE_PRIVATE || 'storage/private';
 const TOKEN = process.env.TOKEN ?? 'null';
-
-
-const app = express();
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use(cors({
-	origin: (origin, callback) => {
-		if (!origin || ENVIRONMENT === 'development') {
-			callback(null, true);
-		} else {
-			const err = new Error('CORS policy: Origin not allowed');
-			err.status = 403;
-			callback(err);
-		}
-	}
-}));
 
 
 const upload = multer({
@@ -122,7 +107,42 @@ const requireRoot = (req, res, next) => {
 }
 
 
+const app = express();
 app.use(extractAuth);
+app.use(rateLimit({
+	// 90000 req / 30 min = 5 req/s
+	windowMs: 1800 * 1000,
+	max: 90000,
+	standardHeaders: true,
+	legacyHeaders: false,
+	ipv6Subnet: 48,
+	statusCode: 429,
+	skipSuccessfulRequests: false,
+	skipFailedRequests: false,
+	message: { ok: false, error: 'Too many requests, please try again later.' },
+	skip: (req, res) => req.isAuthenticated,
+}), (req, res, next) => {
+	if (req.isAuthenticated)
+		return next();
+
+	const hits = req.rateLimit?.hits || 0;
+	if (hits <= 2000)
+		return next();
+	return setTimeout(next, Math.min(Math.floor(hits / 2000) * 100, 1000));
+});
+app.use(cors({
+	origin: (origin, callback) => {
+		if (!origin || ENVIRONMENT === 'development') {
+			callback(null, true);
+		} else {
+			const err = new Error('CORS policy: Origin not allowed');
+			err.status = 403;
+			callback(err);
+		}
+	}
+}));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 
 app.all('/', (req, res) => {
