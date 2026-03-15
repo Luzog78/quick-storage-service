@@ -11,11 +11,16 @@ The application is split into two distinct storage spaces, both located in the `
 
 ## 🔐 Authentication
 
-Protected routes require a Bearer token in the `Authorization` header of your HTTP request.
+Protected routes require a Bearer token in the `Authorization` header of your HTTP request or as an `auth` query parameter.
 
 **Header format:**
 ```
 Authorization: Bearer YOUR_SECRET_TOKEN
+```
+
+**Query parameter format:**
+```
+?auth=YOUR_SECRET_TOKEN
 ```
 
 ## 📦 Global Response Format
@@ -23,20 +28,20 @@ Authorization: Bearer YOUR_SECRET_TOKEN
 All API responses (except for direct file downloads and HEAD requests) return a standard JSON object.
 
 **Success Response:**
-```
+```json
 {
-  "ok": true,
-  "message": "Optional success message",
-  "content": []
+	"ok": true,
+	"message": "Optional success message",
+	"content": []
 }
 ```
 
 **Error Response:**
-```
+```json
 {
-  "ok": false,
-  "error": "Short description of what went wrong",
-  "details": "Extended error stack (only visible in development mode)"
+	"ok": false,
+	"error": "Short description of what went wrong",
+	"details": "Extended error stack (only visible in development mode)"
 }
 ```
 
@@ -51,10 +56,24 @@ All API responses (except for direct file downloads and HEAD requests) return a 
 
 ### Public Storage (/p/)
 * **GET /p/<path>**
-	* **Description**: Download a file or list a folder's contents (`{"content": [[<name>, <isFolder: 1|0>]...]}`).
+	* **Description**: Download a file or list a folder's contents.
 	* **Auth**: Required *only* if `<path>` points to a folder. Not required for files.
+	* **Query Parameters**:
+		* `?download=true`: Forces the file to be downloaded instead of displayed in the browser (only applies to files, ignored for folders).
 	* **Responses**:
 		* `200 OK`: Returns the raw file stream or directory listing array.
+			* For files: The file is sent directly in the response body with appropriate headers.
+			* For folders: Returns a JSON object with a `content` array listing the folder's contents.
+				```json
+				{
+					"ok": true,
+					"content": [
+						["photo1.png", 0],
+						["documents", 1],
+						["notes.txt", 0]
+					]
+				}
+				```
 		* `404 Not Found`: File does not exist, or trying to list a folder without a token.
 
 * **HEAD /p/<path>**
@@ -76,7 +95,47 @@ All API responses (except for direct file downloads and HEAD requests) return a 
 		* Default: Field name `file` (Max 1 file). Saved exactly as named in the path.
 		* Multiple: Field name `files` (Requires `?type=files`).
 	* **Responses**:
-		* `200 OK`: Upload/Creation successful.
+		* `201 Created`: Upload/Creation successful. Returns details of uploaded files if applicable.
+			* For folder creation:
+				```json
+				{
+					"ok": true,
+					"message": "Folder created successfully"
+				}
+				```
+			* For single file upload:
+				```json
+				{
+					"ok": true,
+					"message": "Files uploaded successfully",
+					"content": [
+						{
+							"oldName": "original-filename.jpg",
+							"newName": "original-filename.jpg",
+							"size": 12345
+						}
+					]
+				}
+				```
+			* For multiple file upload:
+				```json
+				{
+					"ok": true,
+					"message": "Files uploaded successfully",
+					"content": [
+						{
+							"oldName": "photo1.png",
+							"newName": "a1b2c3d4-e5f6-7890-abcd-1234567890ef.png",
+							"size": 23456
+						},
+						{
+							"oldName": "document.pdf",
+							"newName": "f1e2d3c4-b5a6-7890-cdef-0987654321ab.pdf",
+							"size": 34567
+						}
+					]
+				}
+				```
 		* `400 Bad Request`: Multer error (e.g., file too large).
 		* `409 Conflict`: File already exists (and overwrite is false).
 
@@ -106,7 +165,7 @@ All API responses (except for direct file downloads and HEAD requests) return a 
 	* **Description**: Moves or renames a file/folder. Can move items between public and private storage.
 	* **Body Requirements**: Form-data, JSON, or urlencoded containing `from` and `to` paths.
 	* **Example Payload**:
-		```
+		```json
 		{
 			"from": "p/old-image.png",
 			"to": "s/hidden-image.png"
@@ -117,6 +176,22 @@ All API responses (except for direct file downloads and HEAD requests) return a 
 		* `200 OK`: Moved successfully.
 		* `400 Bad Request`: Missing `from`/`to` parameters or invalid path prefixes.
 		* `404 Not Found`: Source file does not exist.
+
+* **GET /auth**
+	* **Description**: Generates a temporary Bearer token for authentication.
+	* **Auth**: Requires root access (the master token).
+	* **Query Parameters**:
+		* `?iss=YourIssuer`: Sets the token's issuer claim (default: "QSS").
+		* `?sub=YourSubject`: Sets the token's subject claim (optional).
+		* `?exp=1h`: Sets the token's expiration time (default: 1 hour). Accepts any format supported by the `jsonwebtoken` library (e.g., "30m", "2d").
+	* **Responses**:
+		* `201 Created`: Returns a JSON object containing the generated token.
+			```json
+			{
+				"ok": true,
+				"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+			}
+			```
 
 ### Fallback
 * **404 Not Found**

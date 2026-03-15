@@ -65,14 +65,18 @@ const getSafePath = (baseDir, reqPath) => {
 };
 
 
-const asyncHandler = (fn) => (req, res, next) => {
-	Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = fn => (req, res, next) => {
+	try {
+		Promise.resolve(fn(req, res, next)).catch(next);
+	} catch (err) {
+		next(err);
+	}
 };
 
 
 const extractAuth = (req, res, next) => {
-	const authHeader = req.headers.authorization || '';
-	const token = authHeader.replace('Bearer ', '').trim();
+	const token = (req.headers.authorization || '').replace('Bearer ', '').trim()
+		|| (req.query?.auth || '').trim();
 
 	req.isAuthenticated = false;
 	req.isRoot = false;
@@ -130,17 +134,6 @@ app.use(rateLimit({
 		return next();
 	return setTimeout(next, Math.min(Math.floor(hits / 2000) * 100, 1000));
 });
-app.use(cors({
-	origin: (origin, callback) => {
-		if (!origin || ENVIRONMENT === 'development') {
-			callback(null, true);
-		} else {
-			const err = new Error('CORS policy: Origin not allowed');
-			err.status = 403;
-			callback(err);
-		}
-	}
-}));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
@@ -182,6 +175,7 @@ app.head(/^\/s(\/(.*))?/, requireAuth, asyncHandler(async (req, res) => {
 app.get(/^\/p(\/(.*))?/, asyncHandler(async (req, res) => {
 	const targetPath = getSafePath(PUBLIC_DIR, req.params[1]);
 	const stats = await fs.stat(targetPath); // Throws ENOENT if not found
+	const download = ['true', '1', 'yes'].includes(String(req.query?.download).toLowerCase());
 
 	if (stats.isDirectory()) {
 		if (!req.isAuthenticated)
@@ -193,6 +187,8 @@ app.get(/^\/p(\/(.*))?/, asyncHandler(async (req, res) => {
 		});
 	}
 
+	if (download)
+		return res.download(targetPath, path.basename(targetPath));
 	res.sendFile(targetPath);
 }));
 
@@ -200,6 +196,7 @@ app.get(/^\/p(\/(.*))?/, asyncHandler(async (req, res) => {
 app.get(/^\/s(\/(.*))?/, requireAuth, asyncHandler(async (req, res) => {
 	const targetPath = getSafePath(PRIVATE_DIR, req.params[1]);
 	const stats = await fs.stat(targetPath); // Throws ENOENT if not found
+	const download = ['true', '1', 'yes'].includes(String(req.query?.download).toLowerCase());
 
 	if (stats.isDirectory()) {
 		const items = await fs.readdir(targetPath, { withFileTypes: true });
@@ -209,6 +206,8 @@ app.get(/^\/s(\/(.*))?/, requireAuth, asyncHandler(async (req, res) => {
 		});
 	}
 
+	if (download)
+		return res.download(targetPath, path.basename(targetPath));
 	res.sendFile(targetPath);
 }));
 
@@ -248,25 +247,34 @@ const handleUpload = async (req, res, next, baseDir) => {
 		};
 	}
 
-	upload.fields(req.uploadConf.query)(req, res, async (err) => {
+	upload.fields(req.uploadConf.query)(req, res, err => {
 		if (err) {
 			if (err instanceof multer.MulterError)
 				return res.status(400).json({ ok: false, error: err.message });
 			return next(err);
 		}
 
-		res.json({ ok: true, message: 'File(s) uploaded successfully' });
+		const files = Object.values(req.files).flat() || [];
+		res.status(201).json({
+			ok: true,
+			message: 'Files uploaded successfully',
+			files: files.filter(Boolean).map(file => ({
+				oldName: file.originalname,
+				newName: file.filename,
+				size: file.size,
+			}))
+		});
 	});
 };
 
 
-app.post(/^\/p(\/(.*))?/, requireAuth, asyncHandler((req, res, next) => {
-	handleUpload(req, res, next, PUBLIC_DIR);
+app.post(/^\/p(\/(.*))?/, requireAuth, asyncHandler(async (req, res, next) => {
+	await handleUpload(req, res, next, PUBLIC_DIR);
 }));
 
 
-app.post(/^\/s(\/(.*))?/, requireAuth, asyncHandler((req, res, next) => {
-	handleUpload(req, res, next, PRIVATE_DIR);
+app.post(/^\/s(\/(.*))?/, requireAuth, asyncHandler(async (req, res, next) => {
+	await handleUpload(req, res, next, PRIVATE_DIR);
 }));
 
 
@@ -319,7 +327,7 @@ app.put('/move', requireAuth, upload.none(), asyncHandler(async (req, res) => {
 	if (!from || !to)
 		return res.status(400).json({ ok: false, error: 'Missing "from" or "to" parameters' });
 
-	const resolveRoutePath = (apiPath) => {
+	const resolveRoutePath = apiPath => {
 		let path;
 		if (apiPath.startsWith('p/'))
 			path = getSafePath(PUBLIC_DIR, apiPath.slice(2));
@@ -380,7 +388,7 @@ app.get('/auth', requireRoot, (req, res) => {
 		...(sub ? { subject: sub } : {})
 	});
 
-	res.json({ ok: true, token });
+	res.status(201).json({ ok: true, token });
 });
 
 
