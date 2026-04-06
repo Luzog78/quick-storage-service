@@ -111,6 +111,8 @@ const requireRoot = (req, res, next) => {
 
 
 const app = express();
+
+app.set('trust proxy', '127.0.0.1');
 app.use(extractAuth);
 app.use(rateLimit({
 	// 90000 req / 30 min = 5 req/s
